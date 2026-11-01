@@ -1,0 +1,61 @@
+#
+# realme GT5 240W (RMX3823) - SM8550 / kalama
+#
+# Modelled on qrd8550.toml (same SoC reference), with the boot image format
+# taken from nuwa.toml because that is the only SM8550 *phone* in this tree
+# that is empirically known to boot:
+#
+#   header_version = 1
+#
+# Rationale: this port boots via BootShim, which places a stub kernel in the
+# Android boot image's kernel slot. Header v1/v2 have that slot at a fixed
+# offset; v3/v4 set kernel_size = 0 and expect the payload in the ramdisk
+# instead, which does not match the BootShim layout.
+#
+# If the RMX3823 ABL rejects the image, try header_version = 3 or 4 - but do
+# that only after confirming the failure is at boot image parse time (device
+# falls straight back to fastboot / shows nothing), not later during DXE.
+#
+
+#
+# Boot Shim Configs
+#
+[boot_shim]
+requires_kernel_header = true
+
+#
+# UEFI FD Configs
+#
+# Must match the "UEFI FD" entry in
+# Platforms/Qualcomm/rmx3823Pkg/Library/MemoryMapLib/MemoryMapLib.c
+# (0xA7100000, 0x00300000). blocks is derived as size / 4096 by build_uefi.py.
+#
+[uefi_fd]
+base = 0xA7100000
+size = 0x300000
+
+#
+# Android Boot Image Kernel Configs
+#
+# append_dtb = false on purpose:
+#   Resources/DTBs/rmx3823.dtb does not exist yet - the real board DT has to be
+#   dumped from the running device (/sys/firmware/fdt) or decompiled out of the
+#   stock boot.img. dtbo.img only carries overlays, so it cannot supply it.
+#
+#   Leaving it false is also the more correct behaviour for a UniXNU target:
+#   XNU gets its ADT from the engine compiling the device repo's dts/board.dts,
+#   not from this blob. At runtime UEFI picks up the board DT that XBL already
+#   publishes in the "XBL DT" carveout (0x81A00000), which is authoritative.
+#
+#   Only flip this back to true if you actually want the Mu-Silicium/Linux
+#   behaviour of embedding a DT next to the UEFI FD.
+#
+[boot_image_kernel]
+kernel_compression = "gzip"
+append_dtb         = false
+
+#
+# Android Boot Image Configs
+#
+[boot_image]
+header_version = 1

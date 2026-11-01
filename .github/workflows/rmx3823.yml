@@ -1,0 +1,88 @@
+name: Build UEFI for rmx3823
+
+#
+# Dedicated workflow for the realme GT5 240W (RMX3823) package.
+#
+# Deliberately NOT registered in Status.md as "Active", so that
+# build_active_devices.sh does not try to build it on every upstream push.
+# This workflow is the only thing that builds it, and it can be dispatched by
+# hand while the port is still being brought up.
+#
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "UEFI build mode"
+        type: choice
+        options: [RELEASE, DEBUG]
+        default: DEBUG
+      secureboot:
+        description: "Enable Secure Boot"
+        type: boolean
+        default: false
+  push:
+    branches: [sheng, main]
+    paths:
+      - "Platforms/Qualcomm/rmx3823Pkg/**"
+      - "Resources/Configs/rmx3823.toml"
+      - "Resources/DTBs/rmx3823.dtb"
+      - "build_uefi.py"
+      - ".github/workflows/rmx3823.yml"
+
+env:
+  CI_BUILD: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: bash ./setup_env.sh -p apt
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --break-system-packages -r pip-requirements.txt
+
+      - name: Show toolchain versions
+        run: |
+          clang --version | awk 'NR==1'
+          aarch64-linux-gnu-gcc --version | awk 'NR==1'
+          python3 --version
+
+      - name: Build UEFI
+        run: |
+          MODE="${{ inputs.build_mode }}"
+          MODE="${MODE:-DEBUG}"
+          SB=0
+          if [ "${{ inputs.secureboot }}" = "true" ]; then SB=1; fi
+          python3 ./build_uefi.py -d rmx3823 -r "$MODE" -c -m 0 $( [ "$SB" = "1" ] && echo -s )
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          ls -la Mu-* 2>/dev/null || true
+          mkdir -p out
+          cp -v Mu-* out/ 2>/dev/null || true
+          find Build/rmx3823Pkg -name "*.fd" -exec cp -v {} out/ \; 2>/dev/null || true
+          find Build/rmx3823Pkg -name "*.log" -exec cp -v {} out/ \; 2>/dev/null || true
+
+      - name: Upload images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rmx3823-uefi
+          path: out/
+          if-no-files-found: warn
+          compression-level: 9
