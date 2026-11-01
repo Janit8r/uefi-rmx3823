@@ -3,34 +3,63 @@
 //
 // realme GT5 240W (RMX3823) - SM8550 / kalama
 //
-// VERIFICATION STATUS
-// -------------------
-// The table below is the SM8550 reference layout inherited from qrd8550Pkg.
-// It has NOT yet been diffed against this specific board's XBL memory map,
-// because that map lives in the XBL DT (region "XBL DT" @ 0x81A00000) and in
-// the base DTB inside boot.img, neither of which is reachable from dtbo.img.
+// PROVENANCE
+// ----------
+// Every entry below is transcribed from the memory map this board's own UEFI
+// ships with. The stock uefi.elf carries its uefiplatLA.cfg as an embedded
+// string blob; it was extracted verbatim into uefiplat-rmx3823.cfg in this
+// package, and it declares:
 //
-// What IS corroborated so far, from the board's own dtbo overlay
-// (dtbo.img entry 1, machine "Kalama MTP,zonda-A/B"):
-//   - aop_cmd_db_region @ 0x81C60000 falls inside "AOP" 0x81C00000 + 0xA0000
-//   - smem_region      @ 0x81D00000 equals "SMEM" base
+//   [Config]
+//   Version = 3
+//   MaxMemoryRegions = 74
+//
+// That is 25 DDR regions and 14 register regions, 39 in total, and they are
+// reproduced here one for one and in the same order. The cfg column order maps
+// directly onto this struct:
+//
+//   MemBase, MemSize, MemLabel, BuildHob, ResourceType, ResourceAttribute,
+//   MemoryType, CacheAttributes
+//     -> Address, Length, Name, HobOption, ResourceType, ResourceAttribute,
+//        MemoryType, ArmAttributes
+//
+// Two cross-checks against independent files, both of which agree:
+//   - "IMEM Base" 0x14680000 is exactly the entry point and first LOAD address
+//     of the stock tz.mbn.
+//   - "TZApps Reserved" 0xD8800000 + 0x07400000 contains the 0xd830a000
+//     segment that tz.mbn also loads.
+//
+// Three carveouts are additionally visible in this board's own dtbo overlay:
+//   - aop_cmd_db_region     @ 0x81C60000 falls inside "AOP" 0x81C00000 + 0xA0000
+//   - smem_region           @ 0x81D00000 equals "SMEM" base
 //   - gpu_micro_code_region @ 0x9B09A000 falls inside "PIL Reserved"
-//     0x8A800000 + 0x18280000
-// i.e. the three independently observable carveouts all agree with the
-// reference map, which is why inheriting it is a defensible starting point.
 //
-// STILL TO CONFIRM ON DEVICE (dump /proc/device-tree/reserved-memory or
-// /sys/firmware/fdt and compare every reg property):
-//   - Display Demura / Display Reserved sizes (panel-specific)
-//   - TZApps Reserved size
-//   - that 0xA8000000..0xB8000000 ("Kernel") is genuinely unreserved, since
-//     UEFI hands that window to the next-stage kernel
-//   - that the 0xA7100000 UEFI FD window is unreserved (must match
-//     Resources/Configs/rmx3823.toml [uefi_fd] base)
+// WHAT IS DELIBERATELY NOT HERE
+// -----------------------------
+// qrd8550Pkg's table, which this package started from, also carries GPU PRR
+// (0x81F00000), TPMControl, USB UCSI Shared, PLD_PEP, TZ STAT (0x82700000),
+// ADSP RPC (0x84B00000), MPSS_EFS (0x85300000) and four PCIe apertures. None
+// of them appear in this board's cfg. They were dropped rather than carried
+// over: the gap 0x81F00000..0x8A800000 that they would occupy is not described
+// by the vendor map at all, and inventing reservations for a board that does
+// not declare them is how you hand the kernel memory something else still owns.
+// A region absent from this table gets no HOB, so DXE will neither allocate it
+// nor map it - which is the safe outcome when its true extent is unknown.
 //
-// If any of these turn out wrong, UEFI will either hand the kernel memory XBL
-// still owns, or scribble over a carveout. Treat a boot failure here as a
-// memory-map problem before suspecting drivers.
+// One deviation from the cfg, stated plainly: the cfg marks both "NOMAP"
+// entries as BuildHob = NoMap, and Mu-Silicium's EFI_MEMORY_HOB_OPTION has no
+// NoMap member. They are emitted as AddMem + MEM_RES + Reserv, following
+// qrd8550Pkg. That reserves them instead of leaving them undescribed, which is
+// the conservative reading of the same intent.
+//
+// WHAT THIS TABLE DOES NOT SAY
+// ----------------------------
+// It is authoritative for what UEFI may touch, but it is not a description of
+// installed RAM: it stops at 0x100000000. The 24 GiB this device reports is
+// covered only up to the low 2 GiB window plus carveouts, and memory above
+// 0x100000000 is absent. That is normal for Qualcomm UEFI - the kernel takes
+// its range from the ADT, not from this table - but it means the ADT memory
+// node, not this file, is what has to be right about the top of RAM.
 //
 
 STATIC
@@ -39,25 +68,18 @@ gMemoryDescriptor[] = {
   // Name, Address, Length, HobOption, ResourceType, ResourceAttribute, MemoryType, ArmAttribute
 
   // DDR Regions
-  {"NOMAP",             0x80000000, 0x01200000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN}, // gunyah_hyp_region + cpusys_vm_region
+  {"NOMAP",             0x80000000, 0x01200000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
   {"RSRV0",             0x81200000, 0x00800000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, WRITE_BACK_XN},
   {"XBL DT",            0x81A00000, 0x00040000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, WRITE_BACK_XN},
   {"XBL Ramdump",       0x81A40000, 0x001C0000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
   {"AOP",               0x81C00000, 0x000A0000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
   {"SMEM",              0x81D00000, 0x00200000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"GPU PRR",           0x81F00000, 0x00010000, AddMem, MEM_RES, WRITE_COMBINEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"TPMControl",        0x81F10000, 0x00010000, AddMem, MEM_RES, WRITE_COMBINEABLE, RtData, UNCACHED_UNBUFFERED_XN},
-  {"USB UCSI Shared",   0x81F20000, 0x00010000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"PLD_PEP",           0x81F30000, 0x00006000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"TZ STAT",           0x82700000, 0x00100000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"ADSP RPC",          0x84B00000, 0x00800000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"MPSS_EFS",          0x85300000, 0x00280000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, UNCACHED_UNBUFFERED_XN},
   {"PIL Reserved",      0x8A800000, 0x18280000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
   {"Display Demura",    0xA2A80000, 0x02B00000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH_XN},
-  {"DBI Dump",          0xA6100000, 0x00F00000, NoHob,  MMAP_IO, INITIALIZED, Reserv, UNCACHED_UNBUFFERED_XN},
-  {"FD Reserved",       0xA7000000, 0x00100000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
-  {"UEFI FD",           0xA7100000, 0x00300000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
+  {"DBI Dump",          0xA6100000, 0x00F00000, NoHob,  MMAP_IO, INITIALIZED, Conv,   UNCACHED_UNBUFFERED_XN},
+  {"UEFI FD",           0xA7000000, 0x00400000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
   {"UEFI FD Reserved",  0xA7400000, 0x00200000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
+  {"CPU Vectors",       0xA7600000, 0x00001000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
   {"Info Blk",          0xA7601000, 0x00001000, AddMem, SYS_MEM, SYS_MEM_CAP, RtData, WRITE_BACK_XN},
   {"MMU PageTables",    0xA7602000, 0x00003000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK_XN},
   {"Log Buffer",        0xA7605000, 0x00008000, AddMem, SYS_MEM, SYS_MEM_CAP, RtData, WRITE_BACK_XN},
@@ -66,7 +88,7 @@ gMemoryDescriptor[] = {
   {"Sched Heap",        0xA76D9000, 0x00400000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK_XN},
   {"FV Region",         0xA7AD9000, 0x00400000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK_XN},
   {"UEFI RESV",         0xA7ED9000, 0x00127000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK_XN},
-  {"Kernel",            0xA8000000, 0x10000000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_BACK_XN},
+  {"Kernel",            0xA8000000, 0x10000000, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, WRITE_BACK_XN},
   {"Display Reserved",  0xB8000000, 0x02B00000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH_XN},
   {"DXE Heap",          0xBAB00000, 0x0D1C0000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK_XN},
   {"TZApps Reserved",   0xD8800000, 0x07400000, AddMem, MEM_RES, UNCACHEABLE, Reserv, UNCACHED_UNBUFFERED_XN},
@@ -88,11 +110,7 @@ gMemoryDescriptor[] = {
   {"AOSS",              0x0B000000, 0x04000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"TLMM",              0x0F000000, 0x01000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"SMMU",              0x15000000, 0x00200000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"APSS_HM",           0x17000000, 0x02000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"PCIE_0_AXI",        0x40000000, 0x20000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"PCIE_1_AXI",        0x60000000, 0x04000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"PCIE_0_AHB",        0x01C00000, 0x00008000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"PCIE_1_AHB",        0x01C08000, 0x00008000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE}
+  {"APSS_HM",           0x17000000, 0x02000000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE}
 };
 
 VOID

@@ -82,7 +82,7 @@ jobs:
           base, size = cfg["base"], cfg["size"]
 
           src = open("Platforms/Qualcomm/rmx3823Pkg/Library/MemoryMapLib/MemoryMapLib.c").read()
-          # {"UEFI FD", 0xA7100000, 0x00300000, AddMem, ...}
+          # {"UEFI FD", 0xA7000000, 0x00400000, AddMem, ...}
           m = re.search(r'\{"UEFI FD",\s*(0x[0-9A-Fa-f]+),\s*(0x[0-9A-Fa-f]+)', src)
           if not m:
               sys.exit("MemoryMapLib.c: no 'UEFI FD' entry")
@@ -258,8 +258,12 @@ jobs:
           test -n "$fd"
           size=$(stat -c %s "$fd")
           echo "firmware volume: $fd ($size bytes)"
-          # [uefi_fd] size in Resources/Configs/rmx3823.toml.
-          test "$size" = "3145728" || { echo "::error::expected 3145728 bytes"; exit 1; }
+          # Compare against [uefi_fd] size rather than a literal, so the two
+          # cannot drift apart: a volume of the wrong size lands at the wrong
+          # address when BootShim copies it to FD_BASE.
+          want=$(python3 -c "import tomllib;print(tomllib.load(open('Resources/Configs/rmx3823.toml','rb'))['uefi_fd']['size'])")
+          echo "config says    : $want bytes"
+          test "$size" = "$want" || { echo "::error::expected $want bytes"; exit 1; }
 
       - name: Collect artifacts
         if: always()

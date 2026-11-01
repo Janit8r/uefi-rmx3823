@@ -28,11 +28,19 @@ requires_kernel_header = true
 #
 # Must match the "UEFI FD" entry in
 # Platforms/Qualcomm/rmx3823Pkg/Library/MemoryMapLib/MemoryMapLib.c
-# (0xA7100000, 0x00300000). blocks is derived as size / 4096 by build_uefi.py.
+# (0xA7000000, 0x00400000). blocks is derived as size / 4096 by build_uefi.py.
+#
+# Both values come from the board's own uefiplatLA.cfg, which reserves
+# 0xA7000000 + 0x00400000 as "UEFI FD" and the following 2 MiB at 0xA7400000 as
+# "UEFI FD Reserved". The stock uefi.elf is a 3 MiB image loaded at 0xA7000000,
+# so it sits in the first three quarters of the same carveout; declaring the
+# full 4 MiB here means our volume occupies exactly the window the vendor
+# reserves for it and has 1 MiB of headroom before it would collide with
+# "UEFI FD Reserved".
 #
 [uefi_fd]
-base = 0xA7100000
-size = 0x300000
+base = 0xA7000000
+size = 0x400000
 
 #
 # Android Boot Image Kernel Configs
