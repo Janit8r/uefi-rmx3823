@@ -90,6 +90,23 @@ jobs:
           print(f"UEFI FD {base:#x}+{size:#x} agrees between the config and the memory map")
           PY
 
+      - name: The boot image geometry is explicit
+        run: |
+          python3 - <<'PY'
+          import sys, tomllib
+          cfg = tomllib.load(open("Resources/Configs/rmx3823.toml", "rb"))["boot_image"]
+          # These are the engine's defaults, but mkbootimg.py - which
+          # build_uefi.py uses - has different ones. Leaving any of them out
+          # makes the two build paths disagree, so require all of them.
+          required = ("header_version", "base", "kernel_offset", "tags_offset", "pagesize")
+          missing = [k for k in required if k not in cfg]
+          if missing:
+              sys.exit(f"[boot_image] must state {', '.join(missing)} explicitly")
+          if cfg["pagesize"] not in (2048, 4096):
+              sys.exit(f"[boot_image] pagesize {cfg['pagesize']} is not a valid Android boot page size")
+          print("boot image:", ", ".join(f"{k}={cfg[k]}" for k in required))
+          PY
+
       - name: Every package-local INF reference exists
         run: |
           set -euo pipefail

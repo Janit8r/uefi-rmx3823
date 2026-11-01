@@ -57,5 +57,30 @@ append_dtb         = false
 #
 # Android Boot Image Configs
 #
+# Every field is spelled out even though these are the engine's defaults
+# (unixnu/bootimg.py DEFAULTS), because Mu-Silicium's own build_uefi.py takes
+# its defaults from Resources/Scripts/mkbootimg.py instead, which are different:
+#
+#   engine          base 0x0, kernel_offset 0x8000, tags_offset 0x1E00000, pagesize 4096
+#   mkbootimg.py    base 0x10000000, kernel_offset 0x8000, pagesize 2048
+#
+# Left implicit, the two build paths produce boot images with different load
+# addresses - and mkbootimg.py's 0x10008000 is not even in SM8550's DDR, which
+# starts at 0x80000000. Spelling them out makes both paths agree.
+#
+# The values match sheng.toml, the only SM8550 board in this tree that is known
+# to boot through BootShim. BootShim is position independent (it copies itself
+# and the firmware volume to FD_BASE from its own PC-relative address), so the
+# kernel load address only has to be reachable RAM large enough for the shim
+# plus the 3 MiB volume.
+#
+# header_version = 1: v1/v2 keep the kernel slot at a fixed offset, which is
+# what the BootShim payload layout expects. v3/v4 set kernel_size = 0 and expect
+# the payload in the ramdisk instead.
+#
 [boot_image]
 header_version = 1
+base           = 0x00000000
+kernel_offset  = 0x00008000
+tags_offset    = 0x01E00000
+pagesize       = 4096
