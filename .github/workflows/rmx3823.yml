@@ -30,6 +30,10 @@ on:
     paths:
       - "Platforms/Qualcomm/rmx3823Pkg/**"
       - "Resources/Configs/rmx3823.toml"
+      - "Resources/Scripts/mkbootimg.py"
+      # The build job calls this, so a change here can break the image even
+      # though it is not part of the package.
+      - "build_uefi.py"
       - ".github/workflows/rmx3823.yml"
 
 permissions:
