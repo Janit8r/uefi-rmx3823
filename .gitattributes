@@ -1,0 +1,19 @@
+# Normalise everything to LF in the repository.
+#
+# This tree is built on Linux CI (ubuntu-24.04) and its entry points are bash
+# scripts (setup_env.sh, build_active_devices.sh). A CRLF checkout turns
+# "bash ./setup_env.sh" into a hard failure, and EDK2's build tooling is
+# equally unhappy about \r in .dsc/.fdf/.inc. Windows checkouts still get CRLF
+# in the working tree via core.autocrlf, but the objects stay LF.
+* text=auto eol=lf
+
+# Binary payloads - never touch these.
+*.dtb binary
+*.fd  binary
+*.bin binary
+*.img binary
+*.gz  binary
+*.png binary
+*.jpg binary
+*.jar binary
+*.efi binary
