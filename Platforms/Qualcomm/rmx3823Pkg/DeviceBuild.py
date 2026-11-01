@@ -39,6 +39,20 @@ class CommonPlatform ():
         "Silicium-ACPI",
         "Silicium-ACPI/Platforms/Qualcomm",
         "Silicium-ACPI/Silicon/Qualcomm"
+    ) + tuple (
+        # UniXNU packages.
+        #
+        # rmx3823.dsc needs UniXNUPkg (menu application, boot option registrar,
+        # RAM disk driver) and DarwinBootPkg (the XNU loader). Both live outside
+        # this checkout, so the engine normally supplies them through
+        # board.toml [firmware] packages as {tree}/package and
+        # {tree}/drivers/DarwinBoot.
+        #
+        # build_uefi.py has no equivalent of that list. RMX3823_EXTRA_PACKAGES
+        # (os.pathsep separated) lets a build that bypasses the engine - CI, for
+        # instance - point at the same two directories.
+        #
+        path for path in os.environ.get ("RMX3823_EXTRA_PACKAGES", "").split (os.pathsep) if path
     )
 
 # ####################################################################################### #

@@ -1,23 +1,30 @@
-name: Lint rmx3823Pkg
+name: rmx3823Pkg
 
 #
-# Structural checks for Platforms/Qualcomm/rmx3823Pkg.
+# Two jobs for Platforms/Qualcomm/rmx3823Pkg.
 #
-# This is deliberately NOT a build. rmx3823Pkg carries UniXNUPkg and
-# DarwinBootPkg in its DSC/FDF the way shengPkg does, so it cannot be built with
-# Mu-Silicium's build_uefi.py - that path has no PACKAGES_PATH for those
-# packages. The real build is engine-driven and lives with the device:
+# lint   - fast structural checks. No submodules, seconds to run.
+# build  - the real thing: Mu-Silicium's build_uefi.py, with the UniXNU packages
+#          on PACKAGES_PATH.
 #
+# The build job exists because rmx3823.dsc pulls UniXNUPkg and DarwinBootPkg
+# into the firmware volume. Those live outside this checkout, so the engine
+# normally supplies them through board.toml [firmware] packages. Here they are
+# checked out next to the tree and handed to DeviceBuild.py through
+# RMX3823_EXTRA_PACKAGES.
+#
+# This is a smoke build, not the shipping path. The shipping path is:
 #   ./unixnu build firmware --device ../UniXNU-rmx3823 --uefi .
-#
-# What this workflow does is catch the mistakes that are cheap to catch and
-# expensive to find in a 90-minute EDK II build: references to INFs that are not
-# there, a firmware base that disagrees between the DSC config and the memory
-# map, and leftover identifiers from the package this one was derived from.
 #
 
 on:
   workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "UEFI build mode"
+        type: choice
+        options: [RELEASE, DEBUG]
+        default: DEBUG
   push:
     branches: [sheng, main]
     paths:
@@ -165,3 +172,86 @@ jobs:
           need "$dsc" 'FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf' 'FdtLib'
 
           exit "$fail"
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CI_BUILD: true
+      # Pinned to the revision components.toml records for the DarwinBoot driver.
+      DARWINBOOT_REV: 3c75734014cdab0acd9541e88057b7606ee7ae08
+    steps:
+      - name: Check out the firmware tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Check out the UniXNU package
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: unixnu
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check out DarwinBootPkg
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/UniXNU/DarwinBoot.git drivers/DarwinBoot
+          git -C drivers/DarwinBoot checkout --detach "$DARWINBOOT_REV"
+          test -f drivers/DarwinBoot/DarwinBootPkg/Driver/DarwinBoot.inf
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: bash ./setup_env.sh -p apt
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --break-system-packages -r pip-requirements.txt
+
+      - name: Show toolchain versions
+        run: |
+          clang --version | awk 'NR==1'
+          aarch64-linux-gnu-gcc --version | awk 'NR==1'
+          python3 --version
+
+      - name: Build UEFI
+        env:
+          # The two directories build_uefi.py cannot know about. DeviceBuild.py
+          # appends them to PackagesPath.
+          RMX3823_EXTRA_PACKAGES: ${{ github.workspace }}/unixnu/package:${{ github.workspace }}/drivers/DarwinBoot
+        run: |
+          set -euo pipefail
+          MODE="${{ inputs.build_mode }}"
+          MODE="${MODE:-DEBUG}"
+          python3 ./build_uefi.py -d rmx3823 -r "$MODE" -c -m 0
+
+      - name: Check the firmware volume
+        run: |
+          set -euo pipefail
+          fd=$(find Build/rmx3823Pkg -name SILICIUM_UEFI.fd | head -1)
+          test -n "$fd"
+          size=$(stat -c %s "$fd")
+          echo "firmware volume: $fd ($size bytes)"
+          # [uefi_fd] size in Resources/Configs/rmx3823.toml.
+          test "$size" = "3145728" || { echo "::error::expected 3145728 bytes"; exit 1; }
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p out
+          cp -v Mu-* out/ 2>/dev/null || true
+          find Build/rmx3823Pkg -name "*.fd" -exec cp -v {} out/ \; 2>/dev/null || true
+
+      - name: Upload images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rmx3823-uefi
+          path: out/
+          if-no-files-found: warn
+          compression-level: 9
