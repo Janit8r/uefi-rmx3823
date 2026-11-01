@@ -39,12 +39,29 @@
   USE_CUSTOM_DISPLAY_DRIVER      = 0
 
   #
+  # 0 = Mu drivers only. ABL's framebuffer keeps scanning out and SimpleFbDxe
+  #     publishes a GOP over it, so the UniXNU menu is visible without a single
+  #     vendor hardware driver.
+  # 1 = also load the stock vendor DXE blobs from Binaries/qrd8550 (SMEM, clocks,
+  #     RPMh, UFS, USB, charger, ...). This is the QRD8550 driver set, not an
+  #     RMX3823 one - it has never been run on this board.
+  #
+  # Start at 0. On sheng the vendor chain blanked the panel even with the board's
+  # own panel data present, and rmx3823 has no panel data at all yet.
+  #
+  RMX3823_VENDOR_HW              = 0
+
+  #
   # 0 = SM8550-AB
   # 1 = SM8550-AC
   #
   SOC_TYPE                       = 0
 
 !include KailuaPkg/KailuaPkg.dsc.inc
+
+!if ($(USE_CUSTOM_DISPLAY_DRIVER) == 1) && ($(RMX3823_VENDOR_HW) == 0)
+  !error The stock DisplayDxe chain needs RMX3823_VENDOR_HW = 1
+!endif
 
 [PcdsFixedAtBuild]
   #
@@ -78,6 +95,13 @@
   # Platform PEI
   #
   gQcomPkgTokenSpaceGuid.PcdPlatformType|"LA"
+!if $(RMX3823_VENDOR_HW) == 0
+  # PlatformPeim otherwise walks the stock UEFI's leftover FD window and calls
+  # into its scheduler protocol. With no vendor drivers in the volume nothing
+  # consumes those HOBs, and on sheng that produced an intermittent stall right
+  # after "MMU: enabled".
+  gQcomPkgTokenSpaceGuid.PcdBuildXblHobs|FALSE
+!endif
 
 [LibraryClasses]
   #
@@ -90,8 +114,29 @@
   #
   ConfigurationMapLib|rmx3823Pkg/Library/ConfigurationMapLib/ConfigurationMapLib.inf
 
+  #
+  # UniXNU Libraries
+  #
+  # UniXNULib is shared by the menu application, the boot option registrar and
+  # the RAM disk driver. FdtLib is the MdePkg base implementation.
+  #
+  UniXNULib|UniXNUPkg/Library/UniXNULib/UniXNULib.inf
+  FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
+
 [Components]
   #
   # ACPI Tables
   #
+  # The QRD8550 tables are SoC-generic and Realme has no SM8550 ACPI package
+  # upstream. XNU does not consume ACPI, so these only matter if a Linux
+  # payload is ever booted on this board.
+  #
   qrd8550/AcpiTables.inf
+
+  #
+  # UniXNU
+  #
+  UniXNUPkg/Application/UniXNU/UniXNU.inf
+  UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf
+  UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.inf
+  DarwinBootPkg/Driver/DarwinBoot.inf

@@ -90,6 +90,15 @@ READ_LOCK_STATUS   = TRUE
   INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
   INF SiliciumPkg/Drivers/SmBiosTableDxe/SmBiosTableDxe.inf
 
+  # UniXNU
+  #
+  # The menu application and the boot option registrar. UniXNURamDiskDxe,
+  # DarwinBoot and the DiskIo/Partition/FAT stack are listed in Include/DXE.inc
+  # together with the rest of the dispatched drivers.
+  #
+  INF UniXNUPkg/Application/UniXNU/UniXNU.inf
+  INF UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf
+
   # ACPI
   INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
   INF MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf

@@ -1,88 +1,167 @@
-name: Build UEFI for rmx3823
+name: Lint rmx3823Pkg
 
 #
-# Dedicated workflow for the realme GT5 240W (RMX3823) package.
+# Structural checks for Platforms/Qualcomm/rmx3823Pkg.
 #
-# Deliberately NOT registered in Status.md as "Active", so that
-# build_active_devices.sh does not try to build it on every upstream push.
-# This workflow is the only thing that builds it, and it can be dispatched by
-# hand while the port is still being brought up.
+# This is deliberately NOT a build. rmx3823Pkg carries UniXNUPkg and
+# DarwinBootPkg in its DSC/FDF the way shengPkg does, so it cannot be built with
+# Mu-Silicium's build_uefi.py - that path has no PACKAGES_PATH for those
+# packages. The real build is engine-driven and lives with the device:
+#
+#   ./unixnu build firmware --device ../UniXNU-rmx3823 --uefi .
+#
+# What this workflow does is catch the mistakes that are cheap to catch and
+# expensive to find in a 90-minute EDK II build: references to INFs that are not
+# there, a firmware base that disagrees between the DSC config and the memory
+# map, and leftover identifiers from the package this one was derived from.
 #
 
 on:
   workflow_dispatch:
-    inputs:
-      build_mode:
-        description: "UEFI build mode"
-        type: choice
-        options: [RELEASE, DEBUG]
-        default: DEBUG
-      secureboot:
-        description: "Enable Secure Boot"
-        type: boolean
-        default: false
   push:
     branches: [sheng, main]
     paths:
       - "Platforms/Qualcomm/rmx3823Pkg/**"
       - "Resources/Configs/rmx3823.toml"
-      - "Resources/DTBs/rmx3823.dtb"
-      - "build_uefi.py"
       - ".github/workflows/rmx3823.yml"
 
-env:
-  CI_BUILD: true
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 1
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install build dependencies
-        run: bash ./setup_env.sh -p apt
-
-      - name: Install Python dependencies
-        run: python3 -m pip install --break-system-packages -r pip-requirements.txt
-
-      - name: Show toolchain versions
+      - name: The device config parses
         run: |
-          clang --version | awk 'NR==1'
-          aarch64-linux-gnu-gcc --version | awk 'NR==1'
-          python3 --version
+          python3 - <<'PY'
+          import tomllib, sys
+          p = "Resources/Configs/rmx3823.toml"
+          try:
+              cfg = tomllib.load(open(p, "rb"))
+          except Exception as e:
+              sys.exit(f"{p}: {e}")
+          for key in ("boot_shim", "uefi_fd", "boot_image_kernel", "boot_image"):
+              if key not in cfg:
+                  sys.exit(f"{p}: missing [{key}]")
+          for key in ("base", "size"):
+              if key not in cfg["uefi_fd"]:
+                  sys.exit(f"{p}: missing uefi_fd.{key}")
+          print(f"{p}: FD {cfg['uefi_fd']['base']:#x} + {cfg['uefi_fd']['size']:#x}")
+          PY
 
-      - name: Build UEFI
+      - name: The firmware base agrees with the memory map
         run: |
-          MODE="${{ inputs.build_mode }}"
-          MODE="${MODE:-DEBUG}"
-          SB=0
-          if [ "${{ inputs.secureboot }}" = "true" ]; then SB=1; fi
-          python3 ./build_uefi.py -d rmx3823 -r "$MODE" -c -m 0 $( [ "$SB" = "1" ] && echo -s )
+          python3 - <<'PY'
+          import re, sys, tomllib
+          cfg = tomllib.load(open("Resources/Configs/rmx3823.toml", "rb"))["uefi_fd"]
+          base, size = cfg["base"], cfg["size"]
 
-      - name: Collect artifacts
-        if: always()
+          src = open("Platforms/Qualcomm/rmx3823Pkg/Library/MemoryMapLib/MemoryMapLib.c").read()
+          # {"UEFI FD", 0xA7100000, 0x00300000, AddMem, ...}
+          m = re.search(r'\{"UEFI FD",\s*(0x[0-9A-Fa-f]+),\s*(0x[0-9A-Fa-f]+)', src)
+          if not m:
+              sys.exit("MemoryMapLib.c: no 'UEFI FD' entry")
+          map_base, map_size = int(m.group(1), 16), int(m.group(2), 16)
+          if (map_base, map_size) != (base, size):
+              sys.exit(
+                  f"firmware base mismatch: rmx3823.toml says "
+                  f"{base:#x}+{size:#x}, MemoryMapLib.c says {map_base:#x}+{map_size:#x}")
+          print(f"UEFI FD {base:#x}+{size:#x} agrees between the config and the memory map")
+          PY
+
+      - name: Every package-local INF reference exists
         run: |
-          ls -la Mu-* 2>/dev/null || true
-          mkdir -p out
-          cp -v Mu-* out/ 2>/dev/null || true
-          find Build/rmx3823Pkg -name "*.fd" -exec cp -v {} out/ \; 2>/dev/null || true
-          find Build/rmx3823Pkg -name "*.log" -exec cp -v {} out/ \; 2>/dev/null || true
+          set -euo pipefail
+          missing=0
+          # INF lines in the FDF and its !includes, plus .inf entries in the DSC.
+          # Binaries/qrd8550/* are prebuilt blobs from the Device-Binaries
+          # submodule, so they are not checked against this tree.
+          for ref in $(grep -rhoE '(Binaries/)?(rmx3823Pkg|qrd8550)/[A-Za-z0-9_./-]+\.(inf|dec|dsc|fdf)' \
+                         Platforms/Qualcomm/rmx3823Pkg --include='*.inc' --include='*.fdf' --include='*.dsc' \
+                       | sort -u); do
+            case "$ref" in
+              # Prebuilt vendor blobs, not part of this repository.
+              Binaries/*) continue ;;
+              # Lives in the Silicium-ACPI submodule.
+              qrd8550/AcpiTables.inf) continue ;;
+            esac
+            if [ ! -f "Platforms/Qualcomm/$ref" ]; then
+              echo "::error::missing $ref (referenced but not present)"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
-      - name: Upload images
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: rmx3823-uefi
-          path: out/
-          if-no-files-found: warn
-          compression-level: 9
+      - name: No stale identifiers from the package this was derived from
+        run: |
+          set -euo pipefail
+          # Two references are deliberate: the prebuilt DXE blobs and the
+          # SoC-generic ACPI tables both come from the QRD8550 reference design.
+          # Comment lines are excluded on purpose - the provenance notes in
+          # rmx3823.dsc and MemoryMapLib.c name qrd8550Pkg by design.
+          hits=$(grep -rnE 'qrd8550|QRD8550' Platforms/Qualcomm/rmx3823Pkg \
+                 | grep -vE 'Binaries/qrd8550/' \
+                 | grep -vE 'qrd8550/AcpiTables\.inf' \
+                 | grep -vE ':[0-9]+:[[:space:]]*(#|//)' \
+                 || true)
+          if [ -n "$hits" ]; then
+            echo "::error::stale qrd8550 identifiers:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "no stale identifiers"
+
+      - name: The UniXNU integration is complete
+        run: |
+          set -euo pipefail
+          dsc=Platforms/Qualcomm/rmx3823Pkg/rmx3823.dsc
+          fdf=Platforms/Qualcomm/rmx3823Pkg/rmx3823.fdf
+          dxe=Platforms/Qualcomm/rmx3823Pkg/Include/DXE.inc
+          fail=0
+          need() { # need <file> <token> <description>
+            grep -qF "$2" "$1" || { echo "::error::$1 does not reference $3 ($2)"; fail=1; }
+          }
+
+          # Built as DSC components and placed in the FDF itself, like shengPkg.
+          for inf in UniXNUPkg/Application/UniXNU/UniXNU.inf \
+                     UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf ; do
+            need "$dsc" "$inf" "the UniXNU application/registrar"
+            need "$fdf" "$inf" "the UniXNU application/registrar"
+          done
+
+          # Built as DSC components and dispatched from the DXE include.
+          for inf in UniXNUPkg/Driver/UniXNURamDiskDxe/UniXNURamDiskDxe.inf \
+                     DarwinBootPkg/Driver/DarwinBoot.inf ; do
+            need "$dsc" "$inf" "a UniXNU runtime driver"
+            need "$dxe" "$inf" "a UniXNU runtime driver"
+          done
+
+          # FDF-only modules: EDK II builds them without a [Components] entry,
+          # which is how shengPkg ships them too. They are what turns the
+          # initrd range into a readable FAT volume.
+          for inf in MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf \
+                     MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf \
+                     FatPkg/EnhancedFatDxe/Fat.inf \
+                     MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf ; do
+            need "$dxe" "$inf" "the payload filesystem stack"
+          done
+
+          # Library mappings the shared drivers need.
+          need "$dsc" 'UniXNULib|UniXNUPkg/Library/UniXNULib/UniXNULib.inf' 'UniXNULib'
+          need "$dsc" 'FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf' 'FdtLib'
+
+          exit "$fail"
